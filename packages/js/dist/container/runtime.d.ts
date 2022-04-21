@@ -21,13 +21,13 @@ export declare abstract class WorkspaceContainer {
     fork(fn: WorkspaceFn): Promise<void>;
     createRun(fn: InitWorkspaceFn): Promise<ReturnedAccounts>;
     executeTransaction(fn: () => Promise<FinalExecutionOutcome>): Promise<FinalExecutionOutcome>;
-    abstract createFrom(): Promise<WorkspaceContainer>;
+    abstract clone(): Promise<WorkspaceContainer>;
     protected abstract beforeRun(): Promise<void>;
     protected abstract afterRun(): Promise<void>;
 }
-export declare class TestnetRuntime extends WorkspaceContainer {
-    static create(config: Partial<Config>, initFn?: InitWorkspaceFn): Promise<TestnetRuntime>;
-    createFrom(): Promise<TestnetRuntime>;
+export declare class TestnetContainer extends WorkspaceContainer {
+    static create(config: Partial<Config>, initFn?: InitWorkspaceFn): Promise<TestnetContainer>;
+    clone(): Promise<TestnetContainer>;
     static get defaultConfig(): Config;
     static get clientConfig(): ClientConfig;
     static get provider(): JsonRpcProvider;
@@ -35,14 +35,14 @@ export declare class TestnetRuntime extends WorkspaceContainer {
     beforeRun(): Promise<void>;
     afterRun(): Promise<void>;
 }
-export declare class SandboxRuntime extends WorkspaceContainer {
+export declare class SandboxContainer extends WorkspaceContainer {
     private static readonly LINKDROP_PATH;
     private static get BASE_ACCOUNT_ID();
     private server;
     static defaultConfig(): Promise<Config>;
-    static create(config: Partial<Config>, fn?: InitWorkspaceFn): Promise<SandboxRuntime>;
+    static create(config: Partial<Config>, fn?: InitWorkspaceFn): Promise<SandboxContainer>;
     createAndRun(fn: WorkspaceFn, config?: Partial<Config>): Promise<void>;
-    createFrom(): Promise<SandboxRuntime>;
+    clone(): Promise<SandboxContainer>;
     get baseAccountId(): string;
     static get clientConfig(): ClientConfig;
     get provider(): JsonRpcProvider;
