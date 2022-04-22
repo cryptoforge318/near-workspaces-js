@@ -1,130 +1,48 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SandboxRuntime = exports.TestnetRuntime = exports.WorkspaceContainer = void 0;
-const buffer_1 = require("buffer");
-const path_1 = require("path");
+exports.SandboxWorker = exports.TestnetWorker = exports.Worker = void 0;
 const near_units_1 = require("near-units");
 const utils_1 = require("../utils");
 const account_1 = require("../account");
 const jsonrpc_1 = require("../jsonrpc");
 const internal_utils_1 = require("../internal-utils");
-const server_1 = require("./server");
-class WorkspaceContainer {
-    constructor(config, accounts) {
-        this.returnedAccounts = new Map();
-        this.createdAccounts = {};
-        (0, internal_utils_1.debug)('Lifecycle.WorkspaceContainer.constructor', 'config:', config, 'accounts:', accounts);
+const server_1 = require("../server/server");
+//TODO: move to another file?
+class Worker {
+    constructor(config) {
+        (0, internal_utils_1.debug)('Lifecycle.Worker.constructor', 'config:', config);
         this.config = config;
         this.manager = account_1.AccountManager.create(config);
-        if (accounts) {
-            this.createdAccounts = accounts;
-        }
     }
-    static async create(config) {
+    static async init(config = {}) {
         var _a;
-        (0, internal_utils_1.debug)('Lifecycle.WorkspaceContainer.create()', 'config:', config);
+        (0, internal_utils_1.debug)('Lifecycle.Worker.init()', 'config:', config);
         switch ((_a = config.network) !== null && _a !== void 0 ? _a : (0, utils_1.getNetworkFromEnv)()) {
             case 'testnet':
-                return TestnetRuntime.create(config);
+                return TestnetWorker.init(config);
             case 'sandbox':
-                return SandboxRuntime.create(config);
+                return SandboxWorker.init(config);
             default:
                 throw new Error(`config.network = '${config.network}' invalid; ` // eslint-disable-line @typescript-eslint/restrict-template-expressions
                     + 'must be \'testnet\' or \'sandbox\' (the default). Soon \'mainnet\'');
         }
     }
-    static async createAndRun(fn, config = {}) {
-        (0, internal_utils_1.debug)('Lifecycle.WorkspaceContainer.createAndRun()', 'fn:', fn, 'config:', config);
-        const runtime = await WorkspaceContainer.create(config);
-        await runtime.fork(fn);
-    }
-    get accounts() {
-        return { root: this.manager.root, ...Object.fromEntries(Object.entries(this.createdAccounts).map(([argName, account]) => [
-                argName,
-                this.manager.getAccount(account.accountId),
-            ])) };
-    }
-    get homeDir() {
-        return this.config.homeDir;
-    }
-    get init() {
-        return this.config.init;
-    }
-    get root() {
+    get rootAccount() {
         return this.manager.root;
     }
-    isSandbox() {
-        return this.config.network === 'sandbox';
-    }
-    isTestnet() {
-        return this.config.network === 'testnet';
-    }
-    async fork(fn) {
-        (0, internal_utils_1.debug)('Lifecycle.WorkspaceContainer.fork()', 'fn:', fn, 'this.config:', this.config);
-        try {
-            await this.beforeRun();
-            await fn(this.accounts, this);
-        }
-        catch (error) {
-            if (error instanceof Error) {
-                (0, internal_utils_1.debug)(error.stack);
-            }
-            throw error; // Figure out better error handling
-        }
-        finally {
-            try {
-                // Do any needed teardown
-                await this.afterRun();
-            }
-            catch (error) {
-                if (error instanceof Error) {
-                    (0, internal_utils_1.debug)('Failed to clean up after run');
-                    (0, internal_utils_1.debug)(error);
-                    throw error; // eslint-disable-line no-unsafe-finally
-                }
-            }
-        }
-    }
-    // TODO: this function was used in SanboxRuntime.init to execute fn. Delete and move logic elsewhere
-    async createRun(fn) {
-        (0, internal_utils_1.debug)('Lifecycle.WorkspaceContainer.createRun()', 'fn:', fn, 'config:', this.config);
-        try {
-            await this.beforeRun();
-            const accounts = await fn({ workspace: this, root: this.root });
-            this.createdAccounts = { ...this.createdAccounts, ...accounts };
-            return accounts;
-        }
-        catch (error) {
-            if (error instanceof buffer_1.Buffer || typeof error === 'string') {
-                (0, internal_utils_1.debug)(error);
-            }
-            throw error; // Figure out better error handling
-        }
-        finally {
-            // Do any needed teardown
-            await this.afterRun();
-        }
-    }
-    async executeTransaction(fn) {
-        return fn();
-    }
 }
-exports.WorkspaceContainer = WorkspaceContainer;
-class TestnetRuntime extends WorkspaceContainer {
-    static async create(config) {
-        (0, internal_utils_1.debug)('Lifecycle.TestnetRuntime.create()', 'config:', config);
-        // Add better error handling
+exports.Worker = Worker;
+class TestnetWorker extends Worker {
+    static async init(config) {
+        (0, internal_utils_1.debug)('Lifecycle.TestnetWorker.create()', 'config:', config);
         const fullConfig = { ...this.defaultConfig, ...config };
-        (0, internal_utils_1.debug)('Skipping initialization function for testnet; will run before each `worker.fork`');
-        const runtime = new TestnetRuntime(fullConfig);
+        const runtime = new TestnetWorker(fullConfig);
         await runtime.manager.init();
         return runtime;
     }
-    async createFrom() {
-        (0, internal_utils_1.debug)('Lifecycle.TestnetRuntime.createFrom()');
-        const runtime = new TestnetRuntime({ ...this.config, init: false, initFn: this.config.initFn }, this.createdAccounts);
-        runtime.manager = await this.manager.createFrom(runtime.config);
-        return runtime;
+    tearDown() {
+        // we do not to stop any server here because we are using Testnet
+        return Promise.resolve();
     }
     static get defaultConfig() {
         return {
@@ -139,28 +57,24 @@ class TestnetRuntime extends WorkspaceContainer {
     static get clientConfig() {
         return (0, utils_1.urlConfigFromNetwork)('testnet');
     }
-    static get provider() {
-        return jsonrpc_1.JsonRpcProvider.from(this.clientConfig);
-    }
-    static get baseAccountId() {
-        return 'testnet';
-    }
-    async beforeRun() {
-        (0, internal_utils_1.debug)('Lifecycle.TestnetRuntime.beforeRun()');
-        if (this.config.initFn) {
-            this.createdAccounts = await this.config.initFn({ workspace: this, root: this.root });
-        }
-    }
-    async afterRun() {
-        (0, internal_utils_1.debug)('Lifecycle.TestnetRuntime.afterRun()');
-        await this.manager.cleanup();
-    }
 }
-exports.TestnetRuntime = TestnetRuntime;
-class SandboxRuntime extends WorkspaceContainer {
-    // Edit genesis.json to add `sandbox` as an account
-    static get BASE_ACCOUNT_ID() {
-        return 'test.near';
+exports.TestnetWorker = TestnetWorker;
+class SandboxWorker extends Worker {
+    static async init(config) {
+        (0, internal_utils_1.debug)('Lifecycle.SandboxWorker.create()', 'config:', config);
+        const defaultConfig = await this.defaultConfig();
+        let worker = new SandboxWorker({ ...defaultConfig, ...config });
+        worker.server = await server_1.SandboxServer.init(worker.config);
+        await worker.server.start();
+        return worker;
+    }
+    async tearDown() {
+        try {
+            return await this.server.close();
+        }
+        catch (error) {
+            (0, internal_utils_1.debug)('this.server.close() threw error.', JSON.stringify(error, null, 2));
+        }
     }
     static async defaultConfig() {
         const port = await server_1.SandboxServer.nextPort();
@@ -174,30 +88,10 @@ class SandboxRuntime extends WorkspaceContainer {
             rpcAddr: `http://localhost:${port}`,
         };
     }
-    static async create(config) {
-        (0, internal_utils_1.debug)('Lifecycle.SandboxRuntime.create()', 'config:', config);
-        const defaultConfig = await this.defaultConfig();
-        const sandbox = new SandboxRuntime({ ...defaultConfig, ...config });
-        return sandbox;
-    }
-    async createAndRun(fn, config = {}) {
-        (0, internal_utils_1.debug)('Lifecycle.SandboxRuntime.createAndRun()', 'fn:', fn, 'config:', config);
-        await WorkspaceContainer.createAndRun(fn, config);
-    }
-    async createFrom() {
-        (0, internal_utils_1.debug)('Lifecycle.SandboxRuntime.createAndrun()');
-        let config = await SandboxRuntime.defaultConfig();
-        config = { ...this.config, ...config, init: false, refDir: this.homeDir };
-        const runtime = new SandboxRuntime(config, this.createdAccounts);
-        return runtime;
-    }
-    get baseAccountId() {
-        return SandboxRuntime.BASE_ACCOUNT_ID;
-    }
     static get clientConfig() {
         return {
             network: 'sandbox',
-            rootAccount: SandboxRuntime.BASE_ACCOUNT_ID,
+            rootAccount: "test.near",
             rpcAddr: '',
             initialBalance: near_units_1.NEAR.parse('100 N').toJSON(),
         };
@@ -208,24 +102,6 @@ class SandboxRuntime extends WorkspaceContainer {
     get rpcAddr() {
         return `http://localhost:${this.config.port}`;
     }
-    async beforeRun() {
-        (0, internal_utils_1.debug)('Lifecycle.SandboxRuntime.beforeRun()');
-        this.server = await server_1.SandboxServer.init(this.config);
-        await this.server.start();
-        if (this.config.init) {
-            await this.manager.init();
-        }
-    }
-    async afterRun() {
-        (0, internal_utils_1.debug)('Lifecycle.SandboxRuntime.afterRun()');
-        try {
-            await this.server.close();
-        }
-        catch (error) {
-            (0, internal_utils_1.debug)('this.server.close() threw error.', JSON.stringify(error, null, 2));
-        }
-    }
 }
-exports.SandboxRuntime = SandboxRuntime;
-SandboxRuntime.LINKDROP_PATH = (0, path_1.join)(__dirname, '..', '..', 'core_contracts', 'testnet-linkdrop.wasm');
+exports.SandboxWorker = SandboxWorker;
 //# sourceMappingURL=runtime.js.map
